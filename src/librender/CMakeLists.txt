@@ -62,7 +62,7 @@ add_library(mitsuba-render-obj OBJECT
   spiral.cpp       ${INC_DIR}/spiral.h
   srgb.cpp         ${INC_DIR}/srgb.h
                    ${INC_DIR}/optix_structs.h
-  optix_api.cpp    optix_api.h
+  optix_api.cpp    ${INC_DIR}/optix_api.h
   ${LIBRENDER_EXTRA_SRC}
 )
 

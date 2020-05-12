@@ -11,9 +11,9 @@
 #  include <dlfcn.h>
 #endif
 
-#include "optix_api.h"
 #include <mitsuba/core/logger.h>
 #include <mitsuba/core/filesystem.h>
+#include <mitsuba/render/optix_api.h>
 
 #if !defined(MTS_USE_OPTIX_HEADERS)
 // Driver API

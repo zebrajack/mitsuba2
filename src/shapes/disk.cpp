@@ -9,6 +9,13 @@
 #include <mitsuba/render/interaction.h>
 #include <mitsuba/render/shape.h>
 
+#if defined(MTS_ENABLE_OPTIX)
+    #include <mitsuba/render/optix_api.h>
+# if defined(MTS_USE_OPTIX_HEADERS)
+    #include <optix_function_table_definition.h>
+# endif
+#endif
+
 NAMESPACE_BEGIN(mitsuba)
 
 /**!
@@ -91,15 +98,14 @@ public:
         m_frame = ScalarFrame3f(dp_du / m_du, dp_dv / m_dv, n);
 
         m_inv_surface_area = 1.f / surface_area();
-    }
-
+   }
 
     ScalarBoundingBox3f bbox() const override {
         ScalarBoundingBox3f bbox;
-        bbox.expand(m_to_world.transform_affine(ScalarPoint3f( 1.f,  0.f, 0.f)));
-        bbox.expand(m_to_world.transform_affine(ScalarPoint3f(-1.f,  0.f, 0.f)));
-        bbox.expand(m_to_world.transform_affine(ScalarPoint3f( 0.f,  1.f, 0.f)));
-        bbox.expand(m_to_world.transform_affine(ScalarPoint3f( 0.f, -1.f, 0.f)));
+        bbox.expand(m_to_world.transform_affine(ScalarPoint3f(-1.f, -1.f, 0.f)));
+        bbox.expand(m_to_world.transform_affine(ScalarPoint3f(-1.f,  1.f, 0.f)));
+        bbox.expand(m_to_world.transform_affine(ScalarPoint3f( 1.f, -1.f, 0.f)));
+        bbox.expand(m_to_world.transform_affine(ScalarPoint3f( 1.f,  1.f, 0.f)));
         return bbox;
     }
 
@@ -235,6 +241,47 @@ public:
         update();
         Base::parameters_changed();
     }
+
+#if defined(MTS_ENABLE_OPTIX)
+    // TODO
+    const uint32_t disk_flags[1] = { OPTIX_GEOMETRY_FLAG_NONE };
+
+    DynamicBuffer<Float> m_aabb_buffer;
+    void* m_aabb_buffer_ptr;
+    void optix_geometry() override {
+        m_aabb_buffer = zero<DynamicBuffer<Float>>(6);
+        m_aabb_buffer.managed();
+        store_unaligned(m_aabb_buffer.data(), bbox());
+        m_aabb_buffer_ptr = (void *)m_aabb_buffer.data();
+    }
+
+    void optix_build_input(OptixBuildInput &build_input) const override {
+        build_input.type = OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES;
+        build_input.aabbArray.aabbBuffers   = (CUdeviceptr*) &m_aabb_buffer_ptr;
+        build_input.aabbArray.numPrimitives = 1;
+        build_input.aabbArray.strideInBytes = sizeof(OptixAabb);
+        build_input.aabbArray.flags         = disk_flags;
+        build_input.aabbArray.numSbtRecords = 1;
+    }
+
+    void optix_hit_group_data(HitGroupData& hitgroup) const override {
+        hitgroup.shape_ptr = (uintptr_t) this;
+        // TODO
+        for (size_t i = 0; i < 4; i++)
+            for (size_t j = 0; j < 4; j++)
+                hitgroup.to_world[i * 4 + j] = m_to_world.matrix[i][j];
+        for (size_t i = 0; i < 4; i++)
+            for (size_t j = 0; j < 4; j++)
+                hitgroup.to_world[16 + i * 4 + j] = m_to_world.inverse_transpose[i][j];
+
+        for (size_t i = 0; i < 4; i++)
+            for (size_t j = 0; j < 4; j++)
+                hitgroup.to_object[i * 4 + j] = m_to_object.matrix[i][j];
+        for (size_t i = 0; i < 4; i++)
+            for (size_t j = 0; j < 4; j++)
+                hitgroup.to_object[16 + i * 4 + j] = m_to_object.inverse_transpose[i][j];
+    }
+#endif
 
     std::string to_string() const override {
         std::ostringstream oss;

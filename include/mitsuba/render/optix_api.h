@@ -35,6 +35,7 @@
 # define OPTIX_PROPERTY_TYPE_COMPACTED_SIZE 0x2181
 # define OPTIX_GEOMETRY_FLAG_NONE 0
 # define OPTIX_BUILD_INPUT_TYPE_TRIANGLES 0x2141
+# define OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES 0x2142
 # define OPTIX_VERTEX_FORMAT_FLOAT3 0x2121
 # define OPTIX_INDICES_FORMAT_UNSIGNED_INT3 0x2103
 
@@ -167,6 +168,11 @@ struct OptixBuildInputTriangleArray {
     unsigned int sbtIndexOffsetSizeInBytes;
     unsigned int sbtIndexOffsetStrideInBytes;
     unsigned int primitiveIndexOffset;
+};
+
+struct OptixAabb {
+    float minX; float minY; float minZ;
+    float maxX; float maxY; float maxZ;
 };
 
 struct OptixBuildInputCustomPrimitiveArray {

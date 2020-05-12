@@ -6,6 +6,8 @@ struct HitGroupData {
     void* vertex_positions;
     void* vertex_normals;
     void* vertex_texcoords;
+    float to_world[32];
+    float to_object[32];
 };
 
 struct Params {

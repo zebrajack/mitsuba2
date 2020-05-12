@@ -1,8 +1,8 @@
-#include "optix_api.h"
 #include "librender_ptx.h"
 #include <iomanip>
 
 #include <mitsuba/render/optix_structs.h>
+#include <mitsuba/render/optix_api.h>
 
 NAMESPACE_BEGIN(mitsuba)
 
@@ -19,7 +19,7 @@ struct OptixState {
     OptixDeviceContext context;
     OptixPipeline pipeline = nullptr;
     OptixModule module = nullptr;
-    OptixProgramGroup program_groups[4];
+    OptixProgramGroup program_groups[5];
     OptixShaderBindingTable sbt = {};
     OptixTraversableHandle accel;
     void* accel_buffer;
@@ -36,9 +36,9 @@ struct alignas(OPTIX_SBT_RECORD_ALIGNMENT) EmptySbtRecord {
     char header[OPTIX_SBT_RECORD_HEADER_SIZE];
 };
 
-typedef EmptySbtRecord RayGenSbtRecord;
-typedef EmptySbtRecord MissSbtRecord;
-typedef SbtRecord<HitGroupData>   HitGroupSbtRecord;
+using RayGenSbtRecord   = EmptySbtRecord;
+using MissSbtRecord     = EmptySbtRecord;
+using HitGroupSbtRecord = SbtRecord<HitGroupData>;
 
 MTS_VARIANT void Scene<Float, Spectrum>::accel_init_gpu(const Properties &/*props*/) {
     optix_init();
@@ -99,7 +99,9 @@ MTS_VARIANT void Scene<Float, Spectrum>::accel_init_gpu(const Properties &/*prop
 
         OptixProgramGroupOptions program_group_options = {}; // Initialize to zeros
 
-        OptixProgramGroupDesc prog_group_descs[4];
+        // TODO figure out which shape to add to the pipeline
+
+        OptixProgramGroupDesc prog_group_descs[5];
         memset(prog_group_descs, 0, sizeof(prog_group_descs));
 
         prog_group_descs[0].kind                     = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
@@ -112,15 +114,22 @@ MTS_VARIANT void Scene<Float, Spectrum>::accel_init_gpu(const Properties &/*prop
 
         prog_group_descs[2].kind                         = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
         prog_group_descs[2].hitgroup.moduleCH            = s.module;
-        prog_group_descs[2].hitgroup.entryFunctionNameCH = "__closesthit__ch";
+        prog_group_descs[2].hitgroup.entryFunctionNameCH = "__closesthit__mesh";
+
+        // Disk program group
+        prog_group_descs[3].kind                         = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
+        prog_group_descs[3].hitgroup.moduleCH            = s.module;
+        prog_group_descs[3].hitgroup.entryFunctionNameCH = "__closesthit__disk";
+        prog_group_descs[3].hitgroup.moduleIS            = s.module;
+        prog_group_descs[3].hitgroup.entryFunctionNameIS = "__intersection__disk";
 
 #if !defined(MTS_OPTIX_DEBUG)
-        const unsigned int num_program_groups = 3;
-#else
-        prog_group_descs[3].kind                         = OPTIX_PROGRAM_GROUP_KIND_EXCEPTION;
-        prog_group_descs[3].hitgroup.moduleCH            = s.module;
-        prog_group_descs[3].hitgroup.entryFunctionNameCH = "__exception__err";
         const unsigned int num_program_groups = 4;
+#else
+        prog_group_descs[4].kind                         = OPTIX_PROGRAM_GROUP_KIND_EXCEPTION;
+        prog_group_descs[4].hitgroup.moduleCH            = s.module;
+        prog_group_descs[4].hitgroup.entryFunctionNameCH = "__exception__err";
+        const unsigned int num_program_groups = 5;
 #endif
 
         rt_check_log(optixProgramGroupCreate(
@@ -176,8 +185,10 @@ MTS_VARIANT void Scene<Float, Spectrum>::accel_init_gpu(const Properties &/*prop
 
         for (Shape* shape: m_shapes) {
             shape->optix_geometry();
+            // TODO
+            size_t program_group_idx = (shape->is_mesh() ? 2 : 3);
             // Setup the hitgroup record and copy it to the hitgroup records array
-            rt_check(optixSbtRecordPackHeader(s.program_groups[2], &hg_sbts[shape_index]));
+            rt_check(optixSbtRecordPackHeader(s.program_groups[program_group_idx], &hg_sbts[shape_index]));
             // Compute optix geometry for this shape
             shape->optix_hit_group_data(hg_sbts[shape_index].data);
 
@@ -282,8 +293,9 @@ MTS_VARIANT void Scene<Float, Spectrum>::accel_release_gpu() {
     rt_check(optixProgramGroupDestroy(s.program_groups[0]));
     rt_check(optixProgramGroupDestroy(s.program_groups[1]));
     rt_check(optixProgramGroupDestroy(s.program_groups[2]));
-#if defined(MTS_OPTIX_DEBUG)
     rt_check(optixProgramGroupDestroy(s.program_groups[3]));
+#if defined(MTS_OPTIX_DEBUG)
+    rt_check(optixProgramGroupDestroy(s.program_groups[4]));
 #endif
     rt_check(optixModuleDestroy(s.module));
     rt_check(optixDeviceContextDestroy(s.context));
