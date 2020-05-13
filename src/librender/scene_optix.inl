@@ -71,7 +71,7 @@ MTS_VARIANT void Scene<Float, Spectrum>::accel_init_gpu(const Properties &/*prop
 #endif
 
         pipeline_compile_options.usesMotionBlur        = false;
-        pipeline_compile_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
+        pipeline_compile_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_ANY;
         pipeline_compile_options.numPayloadValues      = 3;
         pipeline_compile_options.numAttributeValues    = 3;
         pipeline_compile_options.pipelineLaunchParamsVariableName = "params";
@@ -181,21 +181,30 @@ MTS_VARIANT void Scene<Float, Spectrum>::accel_init_gpu(const Properties &/*prop
         void* hitgroup_records = (char*)records + sizeof(RayGenSbtRecord) + sizeof(MissSbtRecord);
 
         uint32_t shape_index = 0;
-        std::vector<HitGroupSbtRecord>  hg_sbts(shapes_count);
+        std::vector<HitGroupSbtRecord> hg_sbts(shapes_count);
 
-        for (Shape* shape: m_shapes) {
-            shape->optix_geometry();
-            // TODO
-            size_t program_group_idx = (shape->is_mesh() ? 2 : 3);
-            // Setup the hitgroup record and copy it to the hitgroup records array
-            rt_check(optixSbtRecordPackHeader(s.program_groups[program_group_idx], &hg_sbts[shape_index]));
-            // Compute optix geometry for this shape
-            shape->optix_hit_group_data(hg_sbts[shape_index].data);
+        for (size_t i = 0; i < 2; i++) {
+            for (Shape* shape: m_shapes) {
+                // TODO this is ugly!
+                if (i == 0 && !shape->is_mesh())
+                    continue;
+                if (i == 1 && shape->is_mesh())
+                    continue;
 
-            ++shape_index;
+                shape->optix_geometry();
+                // TODO
+                size_t program_group_idx = (shape->is_mesh() ? 2 : 3);
+                // Setup the hitgroup record and copy it to the hitgroup records array
+                rt_check(optixSbtRecordPackHeader(s.program_groups[program_group_idx], &hg_sbts[shape_index]));
+                // Compute optix geometry for this shape
+                shape->optix_hit_group_data(hg_sbts[shape_index].data);
+
+                ++shape_index;
+            }
         }
+
         // Copy HitGroupRecords to the GPU
-        cuda_memcpy_to_device(hitgroup_records, hg_sbts.data(), sizeof(HitGroupSbtRecord) * shapes_count);
+        cuda_memcpy_to_device(hitgroup_records, hg_sbts.data(), shapes_count * sizeof(HitGroupSbtRecord));
 
         s.sbt.raygenRecord                = (CUdeviceptr)raygen_record;
         s.sbt.missRecordBase              = (CUdeviceptr)miss_record;
@@ -223,71 +232,139 @@ MTS_VARIANT void Scene<Float, Spectrum>::accel_parameters_changed_gpu() {
     if (m_shapes.empty())
         return;
 
-    uint32_t shapes_count = m_shapes.size();
-    uint32_t shape_index = 0;
-    std::vector<OptixBuildInput> build_inputs(shapes_count);
-
+    std::vector<Shape*> shape_meshes, shape_others;
     for (Shape* shape: m_shapes) {
-        // compute optix geometry for this shape
-        shape->optix_build_input(build_inputs[shape_index]);
-        ++shape_index;
+        if (shape->is_mesh())
+            shape_meshes.push_back(shape);
+        else
+            shape_others.push_back(shape);
     }
 
     OptixAccelBuildOptions accel_options = {};
     accel_options.buildFlags = OPTIX_BUILD_FLAG_ALLOW_COMPACTION;
     accel_options.operation  = OPTIX_BUILD_OPERATION_BUILD;
+    accel_options.motionOptions.numKeys = 0;
 
-    OptixAccelBufferSizes gas_buffer_sizes;
-    rt_check(optixAccelComputeMemoryUsage(s.context, &accel_options, build_inputs.data(), shapes_count, &gas_buffer_sizes));
-    void* d_temp_buffer_gas = cuda_malloc(gas_buffer_sizes.tempSizeInBytes);
+    auto build_gas = [&s, &accel_options](const std::vector<Shape*> &shape_subset) {
+        uint32_t shapes_count = shape_subset.size();
 
-    // non-compacted output
-    // TODO: check that this allocation logic works
-    void* d_buffer_temp_output_gas_and_compacted_size = cuda_malloc(gas_buffer_sizes.outputSizeInBytes + 8);
+        if (shapes_count == 0)
+            return OptixTraversableHandle(0);
 
-    OptixAccelEmitDesc emitProperty = {};
-    emitProperty.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
-    emitProperty.result = (CUdeviceptr)((char*)d_buffer_temp_output_gas_and_compacted_size + gas_buffer_sizes.outputSizeInBytes);
+        std::vector<OptixBuildInput> build_inputs(shapes_count);
+        for (size_t i = 0; i < shapes_count; i++)
+            shape_subset[i]->optix_build_input(build_inputs[i]);
 
-    rt_check(optixAccelBuild(
-        s.context,
-        0,              // CUDA stream
-        &accel_options,
-        build_inputs.data(),
-        shapes_count,   // num build inputs
-        (CUdeviceptr)d_temp_buffer_gas,
-        gas_buffer_sizes.tempSizeInBytes,
-        (CUdeviceptr)d_buffer_temp_output_gas_and_compacted_size,
-        gas_buffer_sizes.outputSizeInBytes,
-        &s.accel,
-        &emitProperty,  // emitted property list
-        1               // num emitted properties
-    ));
+        OptixAccelBufferSizes buffer_sizes;
+        rt_check(optixAccelComputeMemoryUsage(s.context, &accel_options, build_inputs.data(), shapes_count, &buffer_sizes));
 
-    cuda_free((void*)d_temp_buffer_gas);
+        void* d_temp_buffer   = cuda_malloc(buffer_sizes.tempSizeInBytes);
+        void* d_output_buffer = cuda_malloc(buffer_sizes.outputSizeInBytes + 8);
 
-    if (s.accel_buffer)
-        cuda_free((void*)s.accel_buffer);
+        OptixAccelEmitDesc emit_property = {};
+        emit_property.type   = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
+        emit_property.result = (CUdeviceptr)((char*)d_output_buffer + buffer_sizes.outputSizeInBytes);
 
-    // TODO: check if this is really usefull considering enoki's way of handling GPU memory
-    size_t compacted_gas_size;
-    cuda_memcpy_from_device(&compacted_gas_size, (void*)emitProperty.result, sizeof(size_t));
-    if (compacted_gas_size < gas_buffer_sizes.outputSizeInBytes) {
-        s.accel_buffer = cuda_malloc(compacted_gas_size);
+        OptixTraversableHandle accel;
+        rt_check(optixAccelBuild(
+            s.context,
+            0,              // CUDA stream
+            &accel_options,
+            build_inputs.data(),
+            shapes_count,   // num build inputs
+            (CUdeviceptr)d_temp_buffer,
+            buffer_sizes.tempSizeInBytes,
+            (CUdeviceptr)d_output_buffer,
+            buffer_sizes.outputSizeInBytes,
+            &accel,
+            &emit_property,  // emitted property list
+            1                // num emitted properties
+        ));
 
-        // Use handle as input and output
-        rt_check(optixAccelCompact(s.context, 0, s.accel, (CUdeviceptr)s.accel_buffer, compacted_gas_size, &s.accel));
+        cuda_free((void*)d_temp_buffer);
+        // cuda_free((void*)d_output_buffer); // TODO need to free this at some point
 
-        cuda_free((void*)d_buffer_temp_output_gas_and_compacted_size);
+        return accel;
+
+        // TODO: check if this is really usefull considering enoki's way of handling GPU memory
+        // if (s.accel_buffer)
+            // cuda_free((void*)s.accel_buffer);
+
+        // size_t compacted_gas_size;
+        // cuda_memcpy_from_device(&compacted_gas_size, (void*)emit_property.result, sizeof(size_t));
+        // if (compacted_gas_size < gas_buffer_sizes.outputSizeInBytes) {
+        //     s.accel_buffer = cuda_malloc(compacted_gas_size);
+
+        //     // Use handle as input and output
+        //     rt_check(optixAccelCompact(s.context, 0, s.accel, (CUdeviceptr)s.accel_buffer, compacted_gas_size, &s.accel));
+
+        //     cuda_free((void*)d_output_buffer);
+        // } else {
+        //     s.accel_buffer = d_output_buffer;
+        // }
+    };
+
+    OptixTraversableHandle meshes_accel = build_gas(shape_meshes);
+    OptixTraversableHandle others_accel = build_gas(shape_others);
+
+    if (!shape_others.empty() && shape_meshes.empty()) {
+        s.accel = others_accel;
+    } else if (shape_others.empty() && !shape_meshes.empty()) {
+        s.accel = meshes_accel;
     } else {
-        s.accel_buffer = d_buffer_temp_output_gas_and_compacted_size;
+        // Create two empty instance with the identity transform
+        OptixInstance instances[2] = {
+            { {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}, // transform
+               0, 0, 255, OPTIX_INSTANCE_FLAG_DISABLE_TRANSFORM, 0, {0, 0}},
+            { {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}, // transform
+               1, 0, 255, OPTIX_INSTANCE_FLAG_DISABLE_TRANSFORM, 0, {0, 0}}
+        };
+
+        instances[0].traversableHandle = meshes_accel;
+        instances[0].sbtOffset = 0;
+        instances[1].traversableHandle = others_accel;
+        instances[1].sbtOffset = shape_meshes.size();
+
+        void* d_instances = cuda_malloc(2 * sizeof(OptixInstance));
+        cuda_memcpy_to_device(d_instances, &instances, 2 * sizeof(OptixInstance));
+
+        OptixBuildInput build_input;
+        build_input.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
+        build_input.instanceArray.instances = d_instances;
+        build_input.instanceArray.numInstances = 2;
+        build_input.instanceArray.aabbs = 0;
+        build_input.instanceArray.numAabbs = 0;
+
+        OptixAccelBufferSizes buffer_sizes;
+        rt_check(optixAccelComputeMemoryUsage(s.context, &accel_options, &build_input, 1, &buffer_sizes));
+
+        void* d_temp_buffer   = cuda_malloc(buffer_sizes.tempSizeInBytes);
+        void* d_output_buffer = cuda_malloc(buffer_sizes.outputSizeInBytes);
+
+        rt_check(optixAccelBuild(
+            s.context,
+            0,              // CUDA stream
+            &accel_options,
+            &build_input,
+            1,              // num build inputs
+            (CUdeviceptr)d_temp_buffer,
+            buffer_sizes.tempSizeInBytes,
+            (CUdeviceptr)d_output_buffer,
+            buffer_sizes.outputSizeInBytes,
+            &s.accel,
+            0,  // emitted property list
+            0   // num emitted properties
+        ));
+
+        cuda_free((void*)d_temp_buffer);
+        // cuda_free((void*)d_output_buffer); // TODO need to free this at some point
     }
 }
 
 MTS_VARIANT void Scene<Float, Spectrum>::accel_release_gpu() {
     OptixState &s = *(OptixState *) m_accel;
     cuda_free((void*)s.sbt.raygenRecord);
-    cuda_free((void*)s.accel_buffer);
+    cuda_free((void*)s.accel_buffer); // TODO
     cuda_free((void*)s.params);
     rt_check(optixPipelineDestroy(s.pipeline));
     rt_check(optixProgramGroupDestroy(s.program_groups[0]));

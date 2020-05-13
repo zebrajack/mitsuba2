@@ -55,38 +55,39 @@ extern "C" __global__ void __intersection__disk() {
     Transform4f to_world(sbt_data->to_world);
     Transform4f to_object(sbt_data->to_object);
 
-    // if (launch_index == 686263) {
+    // printf("launch_index: %i\n", launch_index);
+    // if (launch_index == 176697) {
     //     printf("to_world.matrix: \n");
     //     for (size_t i = 0; i < 4; i++)
     //         printf("%f, %f, %f, %f \n",
-    //                to_world.matrix[i][0],
-    //                to_world.matrix[i][1],
-    //                to_world.matrix[i][2],
-    //                to_world.matrix[i][3]);
+    //                to_world.matrix[0][i],
+    //                to_world.matrix[1][i],
+    //                to_world.matrix[2][i],
+    //                to_world.matrix[3][i]);
 
     //     printf("to_world.inverse_transpose: \n");
     //     for (size_t i = 0; i < 4; i++)
     //         printf("%f, %f, %f, %f \n",
-    //                to_world.inverse_transpose[i][0],
-    //                to_world.inverse_transpose[i][1],
-    //                to_world.inverse_transpose[i][2],
-    //                to_world.inverse_transpose[i][3]);
+    //                to_world.inverse_transpose[0][i],
+    //                to_world.inverse_transpose[1][i],
+    //                to_world.inverse_transpose[2][i],
+    //                to_world.inverse_transpose[3][i]);
 
     //     printf("to_object: \n");
     //     for (size_t i = 0; i < 4; i++)
     //         printf("%f, %f, %f, %f \n",
-    //                to_object.matrix[i][0],
-    //                to_object.matrix[i][1],
-    //                to_object.matrix[i][2],
-    //                to_object.matrix[i][3]);
+    //                to_object.matrix[0][i],
+    //                to_object.matrix[1][i],
+    //                to_object.matrix[2][i],
+    //                to_object.matrix[3][i]);
 
     //     printf("to_object.inverse_transpose: \n");
     //     for (size_t i = 0; i < 4; i++)
     //         printf("%f, %f, %f, %f \n",
-    //                to_object.inverse_transpose[i][0],
-    //                to_object.inverse_transpose[i][1],
-    //                to_object.inverse_transpose[i][2],
-    //                to_object.inverse_transpose[i][3]);
+    //                to_object.inverse_transpose[0][i],
+    //                to_object.inverse_transpose[1][i],
+    //                to_object.inverse_transpose[2][i],
+    //                to_object.inverse_transpose[3][i]);
     // }
 
     Vector3f ray_o = make_vector3f(optixGetWorldRayOrigin());

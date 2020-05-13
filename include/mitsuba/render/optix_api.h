@@ -16,7 +16,8 @@
 # define OPTIX_COMPILE_OPTIMIZATION_LEVEL_0 0
 # define OPTIX_COMPILE_OPTIMIZATION_DEFAULT 3
 # define OPTIX_COMPILE_DEBUG_LEVEL_LINEINFO 1
-# define OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS 1u
+# define OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_ANY 0u
+// # define OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS 1u
 # define OPTIX_EXCEPTION_FLAG_NONE 0u
 # define OPTIX_EXCEPTION_FLAG_STACK_OVERFLOW 1u
 # define OPTIX_EXCEPTION_FLAG_TRACE_DEPTH 2u
@@ -29,15 +30,23 @@
 # define OPTIX_COMPILE_DEBUG_LEVEL_NONE 0
 # define OPTIX_COMPILE_DEBUG_LEVEL_LINEINFO 1
 # define OPTIX_COMPILE_DEBUG_LEVEL_FULL 2
+# define OPTIX_BUILD_FLAG_NONE 0
 # define OPTIX_BUILD_FLAG_ALLOW_COMPACTION 2u
+# define OPTIX_BUILD_FLAG_PREFER_FAST_TRACE 4u
+# define OPTIX_BUILD_FLAG_PREFER_FAST_BUILD 8u
 # define OPTIX_BUILD_OPERATION_BUILD 0x2161
 # define OPTIX_BUILD_OPERATION_UPDATE 0x2162
 # define OPTIX_PROPERTY_TYPE_COMPACTED_SIZE 0x2181
 # define OPTIX_GEOMETRY_FLAG_NONE 0
+# define OPTIX_INSTANCE_FLAG_NONE 0
 # define OPTIX_BUILD_INPUT_TYPE_TRIANGLES 0x2141
 # define OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES 0x2142
+# define OPTIX_BUILD_INPUT_TYPE_INSTANCES 0x2143
+# define OPTIX_BUILD_INPUT_TYPE_INSTANCE_POINTERS 0x2144
 # define OPTIX_VERTEX_FORMAT_FLOAT3 0x2121
 # define OPTIX_INDICES_FORMAT_UNSIGNED_INT3 0x2103
+# define OPTIX_INSTANCE_FLAG_NONE 0
+# define OPTIX_INSTANCE_FLAG_DISABLE_TRANSFORM 64u
 
 using CUcontext = struct CUctx_st *;
 using CUstream  = struct CUstream_st *;
@@ -150,6 +159,16 @@ struct OptixAccelBufferSizes {
 struct OptixAccelEmitDesc {
     CUdeviceptr result;
     int type;
+};
+
+struct OptixInstance {
+    float transform[12];
+    unsigned int instanceId;
+    unsigned int sbtOffset;
+    unsigned int visibilityMask;
+    unsigned int flags;
+    OptixTraversableHandle traversableHandle;
+    unsigned int pad[2];
 };
 
 struct OptixBuildInputTriangleArray {

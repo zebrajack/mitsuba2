@@ -192,7 +192,7 @@ public:
         Float local_y = cache[1];
 #else
         ENOKI_MARK_USED(cache);
-        Ray3f ray    = m_to_object.transform_affine(ray_);
+        Ray3f ray     = m_to_object.transform_affine(ray_);
         Float t       = -ray.o.z() * ray.d_rcp.z();
         Point3f local = ray(t);
         Float local_x = local.x();
@@ -251,7 +251,9 @@ public:
     void optix_geometry() override {
         m_aabb_buffer = zero<DynamicBuffer<Float>>(6);
         m_aabb_buffer.managed();
-        store_unaligned(m_aabb_buffer.data(), bbox());
+        ScalarBoundingBox3f bb = bbox();
+        store_unaligned(m_aabb_buffer.data(),   bb.min);
+        store_unaligned(m_aabb_buffer.data()+3, bb.max);
         m_aabb_buffer_ptr = (void *)m_aabb_buffer.data();
     }
 
